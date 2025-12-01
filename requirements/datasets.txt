@@ -1,0 +1,17 @@
+numpy
+flashbax
+gymnasium
+requests
+dm_tree
+matplotlib
+seaborn
+tabulate
+absl-py
+ml-collections
+jax
+flax
+optax
+distrax
+wandb
+chex
+pillow

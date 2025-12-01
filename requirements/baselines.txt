@@ -1,0 +1,6 @@
+tensorflow[and-cuda]
+tensorflow-probability[tf]
+tensorflow_io
+dm_sonnet
+wandb
+hydra-core
