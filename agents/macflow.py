@@ -19,15 +19,7 @@ class MACFlowAgent(flax.struct.PyTreeNode):
     agent_names: Sequence[str] = nonpytree_field()
     config: Any = nonpytree_field()
 
-    def _time_sin_embed(self, ts):
-        """Sinusoidal time embedding shared across BC flow and integration."""
-        kfreq = int(self.config.get('t_embed_frequencies', 8))
-        freqs = jnp.asarray([2 ** i for i in range(kfreq)], dtype=ts.dtype) * jnp.pi
-        ang = ts * freqs
-        return jnp.concatenate([jnp.sin(ang), jnp.cos(ang)], axis=-1)
-
     def critic_loss(self, batch, grad_params, rng):
-        """Compute the FQL critic loss."""
         rng, sample_rng = jax.random.split(rng)
         next_actions = self.sample_actions(batch['observations'][1:], seed=sample_rng)
         next_actions = jnp.clip(next_actions, -1, 1)
@@ -43,7 +35,6 @@ class MACFlowAgent(flax.struct.PyTreeNode):
         q = self.network.select('critic')(batch['observations'][:-1], actions=batch['actions'][:-1], params=grad_params)
         mixed_target_q = target_q.mean(axis=-1)
         mixed_q = q.mean(axis=-1)
-        # critic_loss = jnp.square(0.5 * (mixed_q - mixed_target_q)).mean()
         critic_loss = jnp.square((mixed_q - mixed_target_q)).mean()
 
         return critic_loss, {
@@ -55,7 +46,6 @@ class MACFlowAgent(flax.struct.PyTreeNode):
         }
 
     def actor_loss(self, batch, grad_params, rng):
-        """Compute the FQL actor loss."""
         rng, x_rng, t_rng = jax.random.split(rng, 3)
 
         # BC flow loss.
@@ -65,14 +55,7 @@ class MACFlowAgent(flax.struct.PyTreeNode):
         x_t = (1 - t) * x_0 + t * x_1
         vel = x_1 - x_0
 
-        t_embed = self._time_sin_embed(t_scalar)
-        pred = self.network.select('actor_bc_flow')(
-            obs_slice,
-            x_t,
-            t_embed,
-            params=grad_params,
-            is_encoded=self.config.get('use_lstm', False),
-        )
+        pred = self.network.select('actor_bc_flow')(batch['observations'], x_t, t, params=grad_params)
         bc_flow_loss = jnp.mean((pred - vel) ** 2)
 
         # Distillation loss.
@@ -207,8 +190,7 @@ class MACFlowAgent(flax.struct.PyTreeNode):
         # Euler method.
         for i in range(self.config['flow_steps']):
             t = jnp.full((*observations.shape[:-1], 1), i / self.config['flow_steps'])
-            t_embed = self._time_sin_embed(t)
-            vels = self.network.select('actor_bc_flow')(observations, actions, t_embed, is_encoded=True)
+            vels = self.network.select('actor_bc_flow')(observations, actions, t, is_encoded=True)
             actions = actions + vels / self.config['flow_steps']
         actions = jnp.clip(actions, -1, 1)
         return actions
@@ -298,12 +280,12 @@ def get_config():
             lr=3e-4,  # Learning rate.
             actor_hidden_dims=(512, 512, 512, 512),  # Actor network hidden dimensions.
             value_hidden_dims=(512, 512, 512, 512),  # Value network hidden dimensions.
-            layer_norm=False,  # Whether to use layer normalization.
+            layer_norm=True,  # Whether to use layer normalization.
             actor_layer_norm=False,  # Whether to use layer normalization for the actor.
             discount=0.995,  # Discount factor.
             tau=0.005,  # Target network update rate.
             q_agg='mean',  # Aggregation method for target Q values.
-            alpha=3.0,  # BC coefficient (need to be tuned for each environment).
+            alpha=1.0,  # BC coefficient (need to be tuned for each environment).
             flow_steps=10,  # Number of flow steps.
             normalize_q_loss=True,  # Whether to normalize the Q loss.
             encoder=ml_collections.config_dict.placeholder(str),  # Visual encoder name (None, 'impala_small', etc.).
